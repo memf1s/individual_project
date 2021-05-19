@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ValidationRule xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>uniq_check</fullName>
+    <active>true</active>
+    <description>there must be no duplicate territories in the same region</description>
+    <errorConditionFormula>Parent__c = VLOOKUP($ObjectType.Territory__c.Fields.Parent__c,
+                $ObjectType.Territory__c.Fields.Name,
+                Name)</errorConditionFormula>
+    <errorMessage>Duplicated Territory entry</errorMessage>
+</ValidationRule>
