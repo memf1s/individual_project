@@ -1,132 +1,140 @@
 public with sharing class TerritoryBasedSharing {
-    public static void addSharing(List<TerritoryUser__c> todoList) {
-        Map<Id,Set<Territory__c>> territoriesPerUser = prepareUsersList(todoList);
-        for(Id user: territoriesPerUser.keySet()) {
-            List<Account> accountsToUpdate = [select Id,Name from Account where Territory__c in :territoriesPerUser.get(user)];
-            enableAccountSharing(user, accountsToUpdate);
+
+    /*  getAccountsByUserId method:
+        accepts a map of territories by account Id
+        returns a map of account Ids by User Id
+    */
+    public static Map<Id,Set<Id>> getAccountsByUserId(Map<Id,Set<Territory__c>> territoriesByAccountId) {
+        Set<Territory__c> allTerritories = new Set<Territory__c>();
+        for(Set<Territory__c> terr : territoriesByAccountId.values()) {
+            allTerritories.addall(terr);
         }
+        List<TerritoryUser__c> tUsers = [
+            select Id, User__c, Territory__r.Id, Territory__r.Name, Territory__r.Parent__c
+            from TerritoryUser__c where Territory__c in :allTerritories
+        ];
+        Map<Id,Set<Id>> accountsByUserId = new Map<Id,Set<Id>>();
+        for (TerritoryUser__c tUser : tUsers) {
+            if (!accountsByUserId.containsKey(tUser.User__c)) {
+                accountsByUserId.put(tUser.User__c, new Set<Id>());
+            }
+            for (Id acctId : territoriesByAccountId.keyset()) {
+                if(territoriesByAccountId.get(acctId).contains(tUser.Territory__r)) {
+                    accountsByUserId.get(tUser.User__c).add(acctId);
+                }
+            }
+        }
+        return accountsByUserId;
     }
 
-    public static void enableAccountSharing(Id user, List<Account> accountsList) {
-        List<AccountShare> accountShare = new List<AccountShare>();
-
-        for (Account acc : accountsList) {
-            AccountShare accShr = new AccountShare(
-                AccountId = acc.Id,
-                UserOrGroupId = user,
-                AccountAccessLevel = 'Edit',
-                ContactAccessLevel = 'Edit',
-                OpportunityAccessLevel = 'None',
-                CaseAccessLevel = 'None'
-            );
-            accountShare.add(accShr);
+    /*  getContactsByUserId method (overloaded):
+        accepts a map of account Ids by User Id
+        returns a map of contact Ids by User Id
+    */
+    public static Map<Id,Set<Id>> getContactsByUserId(Map<Id,Set<Id>> accountsByUserId) {
+        Set<Id> allAccountIds = new Set<Id> ();
+        for (Id userId : accountsByUserId.keyset()) {
+            allAccountIds.addall(accountsByUserId.get(userId));
         }
-        Database.SaveResult[] saveResults = Database.insert(accountShare,false);
-        for(Database.SaveResult dsr : saveResults) {
-            if (!dsr.isSuccess()) {
-                for(Database.Error err : dsr.getErrors()) {
-                    System.debug('ERROR: ' + err.getStatusCode() + ': ' + err.getMessage());
-                    System.debug('Fields that affected this error: ' + err.getFields());
-                }
-            }
-        }
-
-        List<Reference__c> refs = [select Contact__r.Id,Contact__r.Name from Reference__c where Account__c in :accountsList];
-        List<ContactShare> contactShare = new List<ContactShare>();
-        for (Reference__c ref : refs) {
-            ContactShare shr = new ContactShare(
-                ContactId = ref.Contact__c,
-                UserOrGroupId = user,
-                ContactAccessLevel = 'Edit'
-            );
-            contactShare.add(shr);
-        }
-        saveResults = Database.insert(contactShare,false);
-        for(Database.SaveResult dsr : saveResults) {
-            if (!dsr.isSuccess()) {
-                for(Database.Error err : dsr.getErrors()) {
-                    System.debug('ERROR: ' + err.getStatusCode() + ': ' + err.getMessage());
-                    System.debug('Fields that affected this error: ' + err.getFields());
-                }
-            }
-        }
+        List<Reference__c> references = [select Account__r.Id,Account__r.Territory__c, Contact__r.Id from Reference__c where Account__r.Id in :allAccountIds];
+        return getContactsByUserId(accountsByUserId, references);
     }
 
-    public static void removeSharing(List<TerritoryUser__c> todoList) {
-        Map<Id,Set<Territory__c>> territoriesPerUser = prepareUsersList(todoList);
-        List<AccountShare> accountShareList = new List<AccountShare>();
-        List<ContactShare> contactShareList = new List<ContactShare>();
-        for(Id user: territoriesPerUser.keySet()) {
+    /*  getContactsByUserId method (overloaded):
+        accepts a map of account Ids by User Id and list of Reference__c
+        returns a map of contact Ids by User Id
+    */
+    public static Map<Id,Set<Id>> getContactsByUserId(Map<Id,Set<Id>> accountsByUserId, List<Reference__c> references) {
+        Map<Id,Set<Id>> contactsByUserId = new Map<Id,Set<Id>> ();
 
-            List<Account> accountsToUpdate = [select Id,Name from Account where Territory__c in :territoriesPerUser.get(user)];
-            List<AccountShare> accSharetmp = [select Id from AccountShare where AccountId in :accountsToUpdate and UserOrGroupId = :user];
-            if(accSharetmp.size() > 0) {
-                accountShareList.addall(accSharetmp);
+        for (Id userId : accountsByUserId.keyset()) {
+            if (!contactsByUserId.containsKey(userId)) {
+                contactsByUserId.put(userId, new Set<Id>());
             }
-
-            List<Reference__c> refs = [select Contact__r.Id,Contact__r.Name from Reference__c where Account__r.Id in :accountsToUpdate];
-            List<Contact> contacts = new List<Contact>();
-            for(Reference__c ref : refs) { contacts.add(ref.Contact__r); }
-            List<ContactShare> contSharetmp = [select Id from ContactShare where ContactId in :contacts and UserOrGroupId = :user];
-            if(contSharetmp.size() > 0) {
-                contactShareList.addall(contSharetmp);
-            }
-        }
-        if(accountShareList.size() > 0) {
-            Database.DeleteResult[] deleteResults = Database.delete(accountShareList,false);
-            for(Database.DeleteResult ddr : deleteResults) {
-                if (!ddr.isSuccess()) {
-                    for(Database.Error err : ddr.getErrors()) {
-                        System.debug('ERROR: ' + err.getStatusCode() + ': ' + err.getMessage());
-                        System.debug('Fields that affected this error: ' + err.getFields());
-                    }
+            for (Reference__c ref : references) {
+                if(accountsByUserId.get(userId).contains(ref.Account__r.Id)) {
+                    contactsByUserId.get(userId).add(ref.Contact__r.Id);
                 }
             }
         }
-        if(contactShareList.size() > 0) {
-            Database.DeleteResult[] deleteResults = Database.delete(contactShareList,false);
-            for(Database.DeleteResult ddr : deleteResults) {
-                if (!ddr.isSuccess()) {
-                    for(Database.Error err : ddr.getErrors()) {
-                        System.debug('ERROR: ' + err.getStatusCode() + ': ' + err.getMessage());
-                        System.debug('Fields that affected this error: ' + err.getFields());
-                    }
-                }
-            }
-        }
+        return contactsByUserId;
     }
 
-    private static Map<Id,Set<Territory__c>> prepareUsersList(List<TerritoryUser__c> todoList) {
-        List<TerritoryUser__c> tUsersList = [select User__c, Territory__r.Id,Territory__r.Name,Territory__r.Parent__c from TerritoryUser__c where Id in :todoList];
-        Map<Id,Set<Territory__c>> territoriesPerUser = new Map<Id,Set<Territory__c>>();
-        Set<Id> uniqueUsers = new Set<Id>();
-        for(TerritoryUser__c usr : tUsersList) {
-            uniqueUsers.add((Id)usr.User__c);
-        }
-        for(ID usr : uniqueUsers) {
-            List<Territory__c> territories = new List<Territory__c>();
-            for (TerritoryUser__c tUser : tUsersList) {
-                if(usr == tUser.User__c) {
-                    territories.add(tUser.Territory__r);
-                }
+    /*  getTerritoriesByAccount method:
+        accepts a list of account objects
+        returns a map of assigned and parent territories by account ID
+    */
+    public static Map<Id,Set<Territory__c>> getTerritoriesByAccount(List<Account> accounts) {
+        List<Territory__c> assignedTerritories = new List<Territory__c> ([
+            select Id,Name,Parent__c from Territory__c where
+            Id in (select Territory__c from Account where Id in :accounts)
+        ]);
+        // loop through method result to avoid duplicates during map conversion
+        for (Territory__c territory : findParentTerritories(assignedTerritories)) {
+            if (!assignedTerritories.contains(territory)) {
+                assignedTerritories.add(territory);
             }
-            territoriesPerUser.put(usr,new Set<Territory__c>(getSubTerritories(territories)));
         }
-        return territoriesPerUser;
+        Map<Id,Territory__c> territoryMap = new Map<Id,Territory__c>(assignedTerritories);
+
+        Map<Id,Set<Territory__c>> territoriesByAccountId = new Map<Id,Set<Territory__c>> ();
+        for (Account acct : accounts) {
+            if (!territoriesByAccountId.containsKey(acct.Id)) {
+                territoriesByAccountId.put(acct.Id, new Set<Territory__c>());
+                territoriesByAccountId.get(acct.Id).add( territoryMap.get(acct.Territory__c) );
+            }
+            Territory__c accountTerritory = territoryMap.get(acct.Territory__c);
+            while(accountTerritory.Parent__c != null) {
+                accountTerritory = territoryMap.get(accountTerritory.Parent__c);
+                territoriesByAccountId.get(acct.Id).add( territoryMap.get(accountTerritory.Id) );
+            }
+        }
+        return territoriesByAccountId;
     }
 
-    private static List<Territory__c> getSubTerritories(List<Territory__c> territories) {
-        List<Territory__c> hierarchy = new List<Territory__c>(territories);
-        List<Territory__c> currentLevel= new List<Territory__c>(territories);
+    /*  findParentTerritories method:
+        accepts a List of territories for look up
+        returns a List of all parents for each territory
+    */
+    private static List<Territory__c> findParentTerritories(List<Territory__c> territories) {
+        List<Territory__c> parentTerritories = new List<Territory__c>(); // result set of unique parent territories
+        List<Territory__c> parentLevel = territories; // starting point for lookup
         Boolean isDone = false;
-        while(!isDone) {
-            currentLevel = [select Id,Name,Parent__c from Territory__c where Parent__c in :currentLevel];
+        while(!isDone) { // get parents for current level
+            List<Territory__c> currentLevel = [
+                select Id, Name, Parent__r.Id, Parent__r.Name, Parent__r.Parent__c
+                from Territory__c where Id in :parentLevel];
             if (currentLevel.size() > 0) {
-                hierarchy.addall(currentLevel);
+                parentLevel = new List<Territory__c> (); // create new set of parents and re-populate it
+                for (Territory__c tmpTerritory : currentLevel) {
+                    if (tmpTerritory.Parent__c != null) {
+                        parentLevel.add(tmpTerritory.Parent__r);
+                    }
+                }
+                parentTerritories.addall(parentLevel); // add parents to result
             } else {
                 isDone = true;
             }
         }
-        return hierarchy;
+        return parentTerritories;
+    }
+
+    /*  findSubTerritories method:
+        accepts a List of territories for look up
+        returns a List of all subordinate territories
+    */
+    public static List<Territory__c> findSubTerritories(List<Territory__c> territories) {
+        List<Territory__c> subTerritories = territories; // result set of unique sub territories
+        List<Territory__c> currentLevel = territories; // starting point for lookup
+        Boolean isDone = false;
+        while(!isDone) { // get territories with parent in current level
+            currentLevel = [select Id,Name,Parent__c from Territory__c where Parent__c in :currentLevel];
+            if (currentLevel.size() > 0) {
+                subTerritories.addall(currentLevel);
+            } else {
+                isDone = true;
+            }
+        }
+        return subTerritories;
     }
 }

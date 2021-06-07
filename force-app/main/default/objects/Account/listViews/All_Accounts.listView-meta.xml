@@ -3,6 +3,6 @@
     <fullName>All_Accounts</fullName>
     <columns>ACCOUNT.NAME</columns>
     <columns>Territory__c</columns>
-    <filterScope>Mine</filterScope>
+    <filterScope>Everything</filterScope>
     <label>All Accounts</label>
 </ListView>
